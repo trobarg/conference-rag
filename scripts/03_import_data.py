@@ -1,9 +1,9 @@
 """
 Step 3: Import Talk Data to Supabase
 ======================================
-Reads scripts/output/talks.json, splits each talk into sentences,
+Reads scripts/output/talks.json, splits each talk into paragraph chunks,
 imports the text records to Supabase (without embeddings), and
-saves the sentence records locally for the embedding step.
+saves the chunk records locally for the embedding step.
 
 After this step, KEYWORD SEARCH will light up green on your site!
 Embeddings are added in the next step to enable semantic search.
@@ -26,7 +26,6 @@ Prerequisites:
 
 import json
 import os
-import re
 import sys
 import time
 import uuid
@@ -38,6 +37,7 @@ from tqdm import tqdm
 INPUT_FILE = os.path.join('scripts', 'output', 'talks.json')
 OUTPUT_FILE = os.path.join('scripts', 'output', 'sentences.json')
 BATCH_SIZE = 100
+MIN_CHUNK_CHARS = 200
 
 
 def load_config():
@@ -48,11 +48,26 @@ def load_config():
     return public_config, secrets
 
 
-def split_into_sentences(text):
-    """Split text into sentences using a simple heuristic."""
-    sentences = re.split(r'\. (?=[A-Z])', text)
-    sentences = [s.strip() + '.' if not s.endswith('.') else s.strip() for s in sentences]
-    return [s for s in sentences if len(s) > 20]
+def chunk_paragraphs(paragraphs):
+    """Group a talk's paragraphs into chunks of at least MIN_CHUNK_CHARS.
+
+    Short paragraphs (lead-ins like "He continued:", one-line quotes) are
+    merged forward into the next paragraph, since they introduce what follows.
+    A short trailing paragraph is merged back into the previous chunk.
+    """
+    chunks = []
+    current = ''
+    for paragraph in paragraphs:
+        current = f'{current} {paragraph}'.strip()
+        if len(current) >= MIN_CHUNK_CHARS:
+            chunks.append(current)
+            current = ''
+    if current:
+        if chunks:
+            chunks[-1] = f'{chunks[-1]} {current}'
+        else:
+            chunks.append(current)
+    return chunks
 
 
 def main():
@@ -69,13 +84,14 @@ def main():
         talks = json.load(f)
     print(f"   Loaded {len(talks)} talks\n")
 
-    # Split into sentence records (no embeddings yet)
-    print("Splitting talks into sentences...")
+    # Split into paragraph-chunk records (no embeddings yet). Each chunk is one
+    # row; the table and sentence_num column keep their original names.
+    print("Splitting talks into paragraph chunks...")
     sentence_records = []
     for talk in tqdm(talks, desc="Splitting"):
         talk_id = str(uuid.uuid4())
-        sentences = split_into_sentences(talk['text'])
-        for i, sentence in enumerate(sentences, 1):
+        chunks = chunk_paragraphs(talk['paragraphs'])
+        for i, chunk in enumerate(chunks, 1):
             sentence_records.append({
                 'talk_id': talk_id,
                 'title': talk['title'],
@@ -85,18 +101,18 @@ def main():
                 'season': talk['season'],
                 'url': talk['url'],
                 'sentence_num': i,
-                'text': sentence
+                'text': chunk
                 # No 'embedding' field — added in next step
             })
 
-    print(f"✅ Split {len(talks)} talks into {len(sentence_records):,} sentences")
-    print(f"   Average: {len(sentence_records) / len(talks):.1f} sentences per talk\n")
+    print(f"✅ Split {len(talks)} talks into {len(sentence_records):,} paragraph chunks")
+    print(f"   Average: {len(sentence_records) / len(talks):.1f} chunks per talk\n")
 
-    # Save sentences locally (for embedding step to use)
+    # Save chunks locally (for embedding step to use)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(sentence_records, f, ensure_ascii=False)
     file_size_mb = os.path.getsize(OUTPUT_FILE) / (1024 * 1024)
-    print(f"💾 Saved {len(sentence_records):,} sentences to {OUTPUT_FILE} ({file_size_mb:.1f} MB)")
+    print(f"💾 Saved {len(sentence_records):,} chunks to {OUTPUT_FILE} ({file_size_mb:.1f} MB)")
 
     # Connect to Supabase
     public_config, secrets = load_config()

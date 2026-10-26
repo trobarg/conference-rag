@@ -106,6 +106,9 @@ def scrape_talk(talk_url, session):
 
     speaker_tag = soup.find("p", {"class": "author-name"})
     speaker = speaker_tag.text.strip() if speaker_tag else "Unknown"
+    # Procedural items (sustainings, audit reports, Hosanna Shout) are "Presented by", not talks
+    if speaker.startswith("Presented by"):
+        return None
 
     calling_tag = soup.find("p", {"class": "author-role"})
     calling = calling_tag.text.strip() if calling_tag else ""
@@ -114,7 +117,10 @@ def scrape_talk(talk_url, session):
     if not content_div:
         return None
 
-    content = " ".join(p.text.strip() for p in content_div.find_all("p"))
+    # Skip <p> tags inside <figure> (image credits like "iStock.com/...")
+    paragraphs = [p.text.strip() for p in content_div.find_all("p")
+                  if p.text.strip() and not p.find_parent("figure")]
+    content = " ".join(paragraphs)
 
     year_match = re.search(r'/(\d{4})/', talk_url)
     year = int(year_match.group(1)) if year_match else None
@@ -127,7 +133,8 @@ def scrape_talk(talk_url, session):
         "year": year,
         "season": season,
         "url": talk_url,
-        "text": content
+        "text": content,
+        "paragraphs": paragraphs
     }
 
 
