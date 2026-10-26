@@ -679,6 +679,25 @@ input:focus {
     font-size: 0.875rem;
 }
 
+/* Question History */
+.history-item summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: var(--spacing-xs);
+}
+
+.history-answer {
+    white-space: pre-wrap;
+    margin-top: var(--spacing-xs);
+}
+
+.history-delete {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
 @keyframes slideIn {
     from {
         opacity: 0;

@@ -84,6 +84,8 @@ const ragBtn = document.getElementById('rag-btn');
 const ragResults = document.getElementById('rag-results');
 const ragStatus = document.getElementById('rag-status');
 
+const historyResults = document.getElementById('history-results');
+
 // ============================================
 // SETUP BANNER DETECTION
 // ============================================
@@ -278,6 +280,7 @@ if (logoutBtn) {
 function showLogin() {
     if (loginScreen) loginScreen.classList.remove('hidden');
     if (appScreen) appScreen.classList.add('hidden');
+    if (historyResults) historyResults.innerHTML = '';
 }
 
 function showApp(user) {
@@ -286,6 +289,7 @@ function showApp(user) {
     if (userEmailSpan) userEmailSpan.textContent = user.email;
     // Check search readiness when user logs in
     checkSearchReadiness();
+    loadHistory();
 }
 
 function showMessage(text, type) {
@@ -572,11 +576,93 @@ async function askQuestion() {
         }
         showResults('rag', html);
 
+        // Save to this user's history after the answer is already on screen
+        await saveToHistory(question, answer, topTalks);
+        loadHistory();
+
     } catch (error) {
         showResults('rag', `<div class="result-error">Error: ${escapeHtml(error.message)}</div>`);
     } finally {
         showLoading(false);
     }
+}
+
+// ============================================
+// QUESTION HISTORY
+// ============================================
+// question_history is protected by per-user RLS: none of these queries filter
+// by user, yet each user only ever reads, adds, or deletes their own rows.
+
+const HISTORY_LIMIT = 20;
+
+async function saveToHistory(question, answer, sources) {
+    if (!supabaseClient) return;
+
+    // user_id isn't sent: the database fills it in (DEFAULT auth.uid()), and RLS
+    // would reject a row claiming to belong to any other user
+    const { error } = await supabaseClient
+        .from('question_history')
+        .insert({
+            question,
+            answer,
+            sources: sources.map(s => ({ title: s.title, speaker: s.speaker, url: s.url }))
+        });
+
+    if (error) console.warn('Failed to save question history:', error.message);
+}
+
+async function loadHistory() {
+    if (!supabaseClient || !historyResults) return;
+
+    const { data, error } = await supabaseClient
+        .from('question_history')
+        .select('id, question, answer, sources, created_at')
+        .order('created_at', { ascending: false })
+        .limit(HISTORY_LIMIT);
+
+    if (error) {
+        historyResults.innerHTML = `<div class="result-error">Could not load history: ${escapeHtml(error.message)}</div>`;
+        return;
+    }
+
+    if (!data.length) {
+        historyResults.innerHTML = '<div class="no-results">No questions yet. Ask one above!</div>';
+        return;
+    }
+
+    historyResults.innerHTML = data.map(item => {
+        const sources = (item.sources || [])
+            .filter(s => /^https:\/\//.test(s.url || ''))
+            .map(s => `<a href="${escapeHtml(s.url)}" target="_blank" class="result-title-link">${escapeHtml(s.title)}</a>`)
+            .join(' · ');
+
+        return `<div class="result-card history-item">
+            <div class="result-card-header">
+                <div>
+                    <div class="result-title">${escapeHtml(item.question)}</div>
+                    <div class="result-speaker">${escapeHtml(new Date(item.created_at).toLocaleString())}</div>
+                </div>
+                <button class="btn-secondary history-delete" data-history-id="${escapeHtml(item.id)}">Delete</button>
+            </div>
+            <details>
+                <summary>Show answer</summary>
+                <div class="result-sentences history-answer">${escapeHtml(item.answer)}</div>
+                ${sources ? `<div class="result-sources">Sources: ${sources}</div>` : ''}
+            </details>
+        </div>`;
+    }).join('');
+}
+
+async function deleteHistoryItem(id) {
+    if (!supabaseClient) return;
+
+    const { error } = await supabaseClient
+        .from('question_history')
+        .delete()
+        .eq('id', id);
+
+    if (error) console.warn('Failed to delete history item:', error.message);
+    loadHistory();
 }
 
 // ============================================
@@ -750,6 +836,12 @@ if (semanticInput) semanticInput.addEventListener('keypress', (e) => {
 if (ragBtn) ragBtn.addEventListener('click', askQuestion);
 if (ragInput) ragInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') askQuestion();
+});
+
+// Question history delete buttons (one listener, since items are re-rendered)
+if (historyResults) historyResults.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-history-id]');
+    if (btn) deleteHistoryItem(btn.dataset.historyId);
 });
 
 // ============================================

@@ -101,6 +101,47 @@ ON page_views FOR SELECT
 TO anon, authenticated
 USING (true);
 
+-- ============================================
+-- Question History table (PER-USER access)
+-- ============================================
+-- Each signed-in user can read, add, and delete only their own rows.
+-- auth.uid() is the id of the user whose JWT made the request.
+
+CREATE TABLE IF NOT EXISTS question_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    question TEXT NOT NULL CHECK (char_length(question) <= 1000),
+    answer TEXT NOT NULL CHECK (char_length(answer) <= 20000),
+    sources JSONB NOT NULL DEFAULT '[]' CHECK (pg_column_size(sources) <= 8192),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS question_history_user_created_idx
+ON question_history(user_id, created_at DESC);
+
+ALTER TABLE question_history ENABLE ROW LEVEL SECURITY;
+
+-- (select auth.uid()) is evaluated once per query instead of once per row
+DROP POLICY IF EXISTS "Users read own history" ON question_history;
+CREATE POLICY "Users read own history"
+ON question_history FOR SELECT
+TO authenticated
+USING ((select auth.uid()) = user_id);
+
+DROP POLICY IF EXISTS "Users add to own history" ON question_history;
+CREATE POLICY "Users add to own history"
+ON question_history FOR INSERT
+TO authenticated
+WITH CHECK ((select auth.uid()) = user_id);
+
+DROP POLICY IF EXISTS "Users delete own history" ON question_history;
+CREATE POLICY "Users delete own history"
+ON question_history FOR DELETE
+TO authenticated
+USING ((select auth.uid()) = user_id);
+
+-- No UPDATE policy: saved questions and answers can't be edited
+
 -- Create function for similarity search
 -- (DROP first: CREATE OR REPLACE can't change a function's return columns)
 DROP FUNCTION IF EXISTS match_sentences(vector, int);
